@@ -32,9 +32,12 @@ UrgNode2::UrgNode2(const rclcpp::NodeOptions & node_options)
 {
   // urg_open後にLiDARの電源がOFFになった状態でLiDARと通信しようとするとSIGPIPEシグナルが発生する
   // ROS1ではROSのライブラリで設定されていたがROS2では未対応のため、ここで設定する
+  // When trying to communicate with LiDAR after urg_open when LiDAR power is OFF, SIGPIPE signal occurs
+  // In ROS1 this was set by ROS library but ROS2 doesn't support it, so we set it here
   std::signal(SIGPIPE, SIG_IGN);
 
   // パラメータの登録
+  // Parameter registration
   ip_address_ = declare_parameter<std::string>("ip_address", "");
   ip_port_ = declare_parameter<int>("ip_port", 10940);
   serial_port_ = declare_parameter<std::string>("serial_port", "/dev/ttyACM0");
@@ -56,9 +59,11 @@ UrgNode2::UrgNode2(const rclcpp::NodeOptions & node_options)
 }
 
 // デストラクタ
+// Destructor
 UrgNode2::~UrgNode2()
 {
   // スレッドの停止
+  // Stop thread
   stop_thread();
 }
 
@@ -74,6 +79,7 @@ UrgNode2::CallbackReturn UrgNode2::on_configure(const rclcpp_lifecycle::State & 
   }
 
   // Publisher設定
+  // Publisher setup
   if (use_multiecho_) {
     echo_pub_ = std::make_unique<laser_proc::LaserPublisher>(get_node_topics_interface(), 20);
   } else {
@@ -81,6 +87,7 @@ UrgNode2::CallbackReturn UrgNode2::on_configure(const rclcpp_lifecycle::State & 
   }
 
   // スレッド起動
+  // Start thread
   start_thread();
 
   return CallbackReturn::SUCCESS;
@@ -95,14 +102,17 @@ UrgNode2::CallbackReturn UrgNode2::on_activate(const rclcpp_lifecycle::State & s
     return CallbackReturn::ERROR;
   } else {
     // publisherの有効化
+    // Enable publisher
     if (scan_pub_) {
       scan_pub_->on_activate();
     }
 
     // Diagnostics開始
+    // Start diagnostics
     start_diagnostics();
 
     // 累計エラーカウントの初期化
+    // Initialize total error count
     total_error_count_ = 0;
 
     return CallbackReturn::SUCCESS;
@@ -115,6 +125,7 @@ UrgNode2::CallbackReturn UrgNode2::on_deactivate(const rclcpp_lifecycle::State &
   RCLCPP_DEBUG(get_logger(), "transition Deactivating from %s", state.label().c_str());
 
   // Diagnostics停止
+  // Stop diagnostics
   stop_diagnostics();
 
   if (!is_connected_) {
@@ -130,9 +141,11 @@ UrgNode2::CallbackReturn UrgNode2::on_cleanup(const rclcpp_lifecycle::State & st
   RCLCPP_DEBUG(get_logger(), "transition CleaningUp from %s", state.label().c_str());
 
   // スレッドの停止
+  // Stop thread
   stop_thread();
 
   // publisherの解放
+  // Release publisher
   if (use_multiecho_) {
     echo_pub_.reset();
   } else {
@@ -140,6 +153,7 @@ UrgNode2::CallbackReturn UrgNode2::on_cleanup(const rclcpp_lifecycle::State & st
   }
 
   // 切断
+  // Disconnect
   disconnect();
 
   return CallbackReturn::SUCCESS;
@@ -151,12 +165,15 @@ UrgNode2::CallbackReturn UrgNode2::on_shutdown(const rclcpp_lifecycle::State & s
   RCLCPP_DEBUG(get_logger(), "transition Shutdown from %s", state.label().c_str());
 
   // スレッドの停止
+  // Stop thread
   stop_thread();
 
   // Diagnostics停止
+  // Stop diagnostics
   stop_diagnostics();
 
   // publisherの解放
+  // Release publisher
   if (use_multiecho_) {
     echo_pub_.reset();
   } else {
@@ -164,6 +181,7 @@ UrgNode2::CallbackReturn UrgNode2::on_shutdown(const rclcpp_lifecycle::State & s
   }
 
   // 切断
+  // Disconnect
   disconnect();
 
   return CallbackReturn::SUCCESS;
@@ -175,12 +193,15 @@ UrgNode2::CallbackReturn UrgNode2::on_error(const rclcpp_lifecycle::State & stat
   RCLCPP_DEBUG(get_logger(), "transition Error from %s", state.label().c_str());
 
   // スレッドの停止
+  // Stop thread
   stop_thread();
 
   // Diagnostics停止
+  // Stop diagnostics
   stop_diagnostics();
 
   // publisherの解放
+  // Release publisher
   if (use_multiecho_) {
     echo_pub_.reset();
   } else {
@@ -188,15 +209,18 @@ UrgNode2::CallbackReturn UrgNode2::on_error(const rclcpp_lifecycle::State & stat
   }
 
   // 切断
+  // Disconnect
   disconnect();
 
   return CallbackReturn::SUCCESS;
 }
 
 // 初期化
+// Initialization
 void UrgNode2::initialize()
 {
   // パラメータ取得
+  // Get parameters
   ip_address_ = get_parameter("ip_address").as_string();
   ip_port_ = get_parameter("ip_port").as_int();
   serial_port_ = get_parameter("serial_port").as_string();
@@ -217,18 +241,21 @@ void UrgNode2::initialize()
   cluster_ = get_parameter("cluster").as_int();
 
   // 範囲チェック
+  // Range check
   angle_min_ = (angle_min_ < -M_PI) ? -M_PI : ((angle_min_ > M_PI) ? M_PI : angle_min_);
   angle_max_ = (angle_max_ < -M_PI) ? -M_PI : ((angle_max_ > M_PI) ? M_PI : angle_max_);
   skip_ = (skip_ < 0) ? 0 : ((skip_ > 9) ? 9 : skip_);
   cluster_ = (cluster_ < 1) ? 1 : ((cluster_ > 99) ? 99 : cluster_);
 
   // 内部変数初期化
+  // Initialize internal variables
   is_connected_ = false;
   is_measurement_started_ = false;
   is_stable_ = false;
   user_latency_ = rclcpp::Duration::from_seconds(time_offset_);
 
   // メッセージヘッダのframe_id設定
+  // Set frame_id for message header
   header_frame_id_ =
     (frame_id_.find_first_not_of('/') == std::string::npos) ? "" : frame_id_.substr(
     frame_id_.find_first_not_of(
@@ -241,10 +268,12 @@ void UrgNode2::initialize()
 }
 
 // Lidarとの接続処理
+// Connection process with Lidar
 bool UrgNode2::connect()
 {
   if (!ip_address_.empty()) {
     // イーサネット接続
+    // Ethernet connection
     int result = urg_open(&urg_, URG_ETHERNET, ip_address_.c_str(), ip_port_);
     if (result < 0) {
       RCLCPP_ERROR(
@@ -254,6 +283,7 @@ bool UrgNode2::connect()
     }
   } else {
     // シリアル接続
+    // Serial connection
     int result = urg_open(&urg_, URG_SERIAL, serial_port_.c_str(), serial_baud_);
     if (result < 0) {
       RCLCPP_ERROR(
@@ -285,6 +315,7 @@ bool UrgNode2::connect()
   RCLCPP_INFO(get_logger(), "%s", ss.str().c_str());
 
   // LiDAR情報格納
+  // Store LiDAR information
   device_status_ = urg_sensor_status(&urg_);
   sensor_status_ = urg_sensor_state(&urg_);
   product_name_ = urg_sensor_product_type(&urg_);
@@ -293,6 +324,7 @@ bool UrgNode2::connect()
   scan_period_ = 1.e-6 * static_cast<double>(urg_scan_usec(&urg_));
 
   // 接続先のLiDARが強度出力に対応しているか
+  // Check if connected LiDAR supports intensity output
   if (publish_intensity_) {
     use_intensity_ = is_intensity_supported();
     if (!use_intensity_) {
@@ -302,6 +334,7 @@ bool UrgNode2::connect()
     }
   }
   // 接続先のLiDARがマルチエコー出力に対応しているか
+  // Check if connected LiDAR supports multiecho output
   if (publish_multiecho_) {
     use_multiecho_ = is_multiecho_supported();
     if (!use_multiecho_) {
@@ -312,6 +345,7 @@ bool UrgNode2::connect()
   }
 
   // 計測タイプ設定
+  // Set measurement type
   if (use_intensity_ && use_multiecho_) {
     measurement_type_ = URG_MULTIECHO_INTENSITY;
   } else if (use_intensity_) {
@@ -326,29 +360,36 @@ bool UrgNode2::connect()
 }
 
 // スキャン設定
+// Scan settings
 void UrgNode2::set_scan_parameter()
 {
   // スキャンデータ受信領域の確保（AMAX+1が返る）
+  // Allocate scan data reception area (returns AMAX+1)
   int urg_data_size = urg_max_data_size(&urg_);
   // AMAXは1440が最大と想定されているが一応制限（仮実装）をかける
+  // AMAX is assumed to be maximum 1440 but apply limit (temporary implementation) just in case
   if (urg_data_size > URG_NODE2_MAX_DATA_SIZE) {
     urg_data_size = URG_NODE2_MAX_DATA_SIZE;
   }
 
   // マルチエコー分の領域を確保(URG_MAX_ECHO = 3)
+  // Allocate area for multiecho (URG_MAX_ECHO = 3)
   distance_.resize(urg_data_size * URG_MAX_ECHO);
   intensity_.resize(urg_data_size * URG_MAX_ECHO);
 
   // 指定範囲のステップ変換（範囲クリップ&丸め）
+  // Step conversion of specified range (range clipping & rounding)
   first_step_ = urg_rad2step(&urg_, angle_min_);
   last_step_ = urg_rad2step(&urg_, angle_max_);
 
   // 逆転してた場合入れ替え
+  // Swap if reversed
   if (last_step_ < first_step_) {
     std::swap(first_step_, last_step_);
   }
 
   // 変換後ステップが同値の場合は1ずらす
+  // If converted steps are the same value, shift by 1
   if (last_step_ == first_step_) {
     int min_step, max_step;
     urg_step_min_max(&urg_, &min_step, &max_step);
@@ -360,13 +401,16 @@ void UrgNode2::set_scan_parameter()
   }
 
   // スキャンデータ範囲の反映
+  // Apply scan data range
   angle_min_ = urg_step2rad(&urg_, first_step_);
   angle_max_ = urg_step2rad(&urg_, last_step_);
 
   // スキャンデータ範囲の設定
+  // Set scan data range
   urg_set_scanning_parameter(&urg_, first_step_, last_step_, cluster_);
 
   // スキャントピック用のパラメータ設定
+  // Parameter settings for scan topic
   topic_angle_min_ = urg_step2rad(&urg_, first_step_);
   topic_angle_max_ = urg_step2rad(&urg_, last_step_);
   topic_angle_increment_ = cluster_ * urg_step2rad(&urg_, 1);
@@ -390,6 +434,7 @@ void UrgNode2::set_scan_parameter()
 }
 
 // Lidarとの切断処理
+// Disconnection process with Lidar
 void UrgNode2::disconnect()
 {
   if (is_connected_) {
@@ -399,15 +444,19 @@ void UrgNode2::disconnect()
 }
 
 // Lidarとの再接続処理
+// Reconnection process with Lidar
 void UrgNode2::reconnect()
 {
   // 切断
+  // Disconnect
   disconnect();
   // 接続
+  // Connect
   connect();
 }
 
 // scanスレッド
+// Scan thread
 void UrgNode2::scan_thread()
 {
   reconnect_count_ = 0;
@@ -421,11 +470,13 @@ void UrgNode2::scan_thread()
     }
 
     // Inactive状態判定
+    // Inactive state determination
     rclcpp_lifecycle::State state = get_current_state();
     if (state.label() == "inactive") {
       is_stable_ = urg_is_stable(&urg_);
       if (!is_stable_) {
         // 再接続処理
+        // Reconnection process
         reconnect();
         reconnect_count_++;
       }
@@ -434,24 +485,29 @@ void UrgNode2::scan_thread()
     }
 
     // スキャン設定
+    // Scan settings
     set_scan_parameter();
 
     // 調整モード
+    // Calibration mode
     if (calibrate_time_) {
       calibrate_system_latency(URG_NODE2_CALIBRATION_MEASUREMENT_TIME);
     }
 
     // LiDAR状態更新
+    // Update LiDAR status
     device_status_ = urg_sensor_status(&urg_);
     sensor_status_ = urg_sensor_state(&urg_);
     is_stable_ = urg_is_stable(&urg_);
 
     // 計測開始
+    // Start measurement
     int ret = urg_start_measurement(&urg_, measurement_type_, 0, skip_, 0);
     if (ret < 0) {
       RCLCPP_WARN(get_logger(), "Could not start Hokuyo measurement\n%s", urg_error(&urg_));
 
       // 再接続処理
+      // Reconnection process
       reconnect();
       reconnect_count_++;
 
@@ -466,6 +522,7 @@ void UrgNode2::scan_thread()
 
     while (!close_thread_) {
       // Inactive状態判定
+      // Inactive state determination
       rclcpp_lifecycle::State state = get_current_state();
       if (state.label() == "inactive") {
         urg_stop_measurement(&urg_);
@@ -506,15 +563,18 @@ void UrgNode2::scan_thread()
       }
 
       // エラーカウント判定
+      // Error count determination
       if (error_count_ > error_limit_) {
         RCLCPP_ERROR(get_logger(), "Error count exceeded limit, reconnecting.");
         // 再接続処理
+        // Reconnection process
         is_measurement_started_ = false;
         reconnect();
         reconnect_count_++;
         break;
       } else {
         // エラーカウントのリセット
+        // Reset error count
         rclcpp::Time current_time = system_clock.now();
         rclcpp::Duration period = current_time - prev_time;
         if (period.seconds() >= error_reset_period_) {
@@ -526,10 +586,12 @@ void UrgNode2::scan_thread()
   }
 
   // 切断処理
+  // Disconnection process
   disconnect();
 }
 
 // スキャンデータ取得
+// Get scan data
 bool UrgNode2::create_scan_message(sensor_msgs::msg::LaserScan & msg)
 {
   msg.header.frame_id = header_frame_id_;
@@ -556,6 +618,7 @@ bool UrgNode2::create_scan_message(sensor_msgs::msg::LaserScan & msg)
   }
 
   // タイムスタンプ設定
+  // Set timestamp
   if (synchronize_time_) {
     system_time_stamp = get_synchronized_time(time_stamp, system_time_stamp);
   }
@@ -563,6 +626,7 @@ bool UrgNode2::create_scan_message(sensor_msgs::msg::LaserScan & msg)
     get_angular_time_offset();
 
   // データ領域確保
+  // Allocate data area
   msg.ranges.resize(num_beams);
   if (use_intensity_) {
     msg.intensities.resize(num_beams);
@@ -584,6 +648,7 @@ bool UrgNode2::create_scan_message(sensor_msgs::msg::LaserScan & msg)
 }
 
 // マルチエコースキャンデータ取得
+// Get multiecho scan data
 bool UrgNode2::create_scan_message(sensor_msgs::msg::MultiEchoLaserScan & msg)
 {
   msg.header.frame_id = header_frame_id_;
@@ -609,6 +674,7 @@ bool UrgNode2::create_scan_message(sensor_msgs::msg::MultiEchoLaserScan & msg)
   }
 
   // タイムスタンプ設定
+  // Set timestamp
   if (synchronize_time_) {
     system_time_stamp = get_synchronized_time(time_stamp, system_time_stamp);
   }
@@ -616,6 +682,7 @@ bool UrgNode2::create_scan_message(sensor_msgs::msg::MultiEchoLaserScan & msg)
     get_angular_time_offset();
 
   // データ領域確保
+  // Allocate data area
   msg.ranges.reserve(num_beams);
   if (use_intensity_) {
     msg.intensities.reserve(num_beams);
@@ -649,6 +716,7 @@ bool UrgNode2::create_scan_message(sensor_msgs::msg::MultiEchoLaserScan & msg)
 }
 
 // 診断情報入力
+// Input diagnostic information
 void UrgNode2::populate_diagnostics_status(diagnostic_updater::DiagnosticStatusWrapper & status)
 {
   if (!is_connected_) {
@@ -697,17 +765,21 @@ void UrgNode2::populate_diagnostics_status(diagnostic_updater::DiagnosticStatusW
 }
 
 // スキャンスレッドの開始
+// Start scan thread
 void UrgNode2::start_thread(void)
 {
   // スレッド終了フラグのクリア
+  // Clear thread termination flag
   close_thread_ = false;
   scan_thread_ = std::thread(std::bind(&UrgNode2::scan_thread, this));
 }
 
 // スキャンスレッドの停止
+// Stop scan thread
 void UrgNode2::stop_thread(void)
 {
   // スレッド終了フラグのセット
+  // Set thread termination flag
   close_thread_ = true;
   if (scan_thread_.joinable()) {
     scan_thread_.join();
@@ -715,14 +787,17 @@ void UrgNode2::stop_thread(void)
 }
 
 // Diagnosticsの開始
+// Start diagnostics
 void UrgNode2::start_diagnostics(void)
 {
   // Diagnostics設定
+  // Diagnostics settings
   diagnostic_updater_.reset(new diagnostic_updater::Updater(this));
   diagnostic_updater_->setHardwareID(device_id_);
   diagnostic_updater_->add("Hardware Status", this, &UrgNode2::populate_diagnostics_status);
 
   // Diagnosticsトピック設定
+  // Diagnostics topic settings
   diagnostics_freq_ = 1.0 / (scan_period_ * (skip_ + 1));
   if (use_multiecho_) {
     echo_freq_.reset(
@@ -744,9 +819,11 @@ void UrgNode2::start_diagnostics(void)
 }
 
 // Diagnosticsの停止
+// Stop diagnostics
 void UrgNode2::stop_diagnostics(void)
 {
   // Diagnostics解放
+  // Release diagnostics
   diagnostic_updater_.reset();
   if (use_multiecho_) {
     echo_freq_.reset();
@@ -757,6 +834,9 @@ void UrgNode2::stop_diagnostics(void)
   // 暫定対応
   // Diagnosticsが追加したパラメータの解放
   // diagnostic_updaterを再び生成するとdeclare_parameterが呼ばれエラーになる
+  // Temporary workaround
+  // Release parameters added by diagnostics
+  // When diagnostic_updater is generated again, declare_parameter is called and causes an error
   //   https://github.com/ros/diagnostics/pull/227
   if (has_parameter("diagnostic_updater.period")) {
     try {
@@ -768,9 +848,11 @@ void UrgNode2::stop_diagnostics(void)
 }
 
 // 接続先LiDARが強度出力に対応しているかどうか
+// Check if connected LiDAR supports intensity output
 bool UrgNode2::is_intensity_supported(void)
 {
   // 計測は停止している必要がある
+  // Measurement must be stopped
   if (is_measurement_started_) {
     return false;
   }
@@ -783,6 +865,7 @@ bool UrgNode2::is_intensity_supported(void)
   int ret = urg_get_distance_intensity(&urg_, &distance_[0], &intensity_[0], NULL);
   if (ret <= 0) {
     // 強度出力非対応
+    // Intensity output not supported
     return false;
   }
 
@@ -792,9 +875,11 @@ bool UrgNode2::is_intensity_supported(void)
 }
 
 // 接続先LiDARがマルチエコー出力に対応しているかどうか
+// Check if connected LiDAR supports multiecho output
 bool UrgNode2::is_multiecho_supported(void)
 {
   // 計測は停止している必要がある
+  // Measurement must be stopped
   if (is_measurement_started_) {
     return false;
   }
@@ -807,6 +892,7 @@ bool UrgNode2::is_multiecho_supported(void)
   int ret = urg_get_multiecho(&urg_, &distance_[0], NULL);
   if (ret <= 0) {
     // マルチエコー出力非対応
+    // Multiecho output not supported
     return false;
   }
 
@@ -816,6 +902,7 @@ bool UrgNode2::is_multiecho_supported(void)
 }
 
 // システムレイテンシの計測
+// Measure system latency
 void UrgNode2::calibrate_system_latency(size_t num_measurements)
 {
   if (!is_connected_) {
@@ -845,12 +932,14 @@ void UrgNode2::calibrate_system_latency(size_t num_measurements)
     }
 
     // 格納した差をソートし中央値を返す
+    // Sort stored differences and return median
     std::nth_element(
       time_offsets.begin(),
       time_offsets.begin() + time_offsets.size() / 2, time_offsets.end());
     system_latency_ = time_offsets[time_offsets.size() / 2];
 
     // 開始角度までの旋回時間を加算
+    // Add rotation time to start angle
     system_latency_ = system_latency_ + get_angular_time_offset();
 
     RCLCPP_INFO(
@@ -864,9 +953,11 @@ void UrgNode2::calibrate_system_latency(size_t num_measurements)
 }
 
 // ROS時刻とLiDAR時刻の差の計算
+// Calculate difference between ROS time and LiDAR time
 rclcpp::Duration UrgNode2::get_native_clock_offset(size_t num_measurements)
 {
   // すでに計測開始されていた場合エラー
+  // Error if measurement has already started
   if (is_measurement_started_) {
     std::stringstream ss;
     ss << "Cannot get native clock offset while started.";
@@ -882,17 +973,22 @@ rclcpp::Duration UrgNode2::get_native_clock_offset(size_t num_measurements)
   std::vector<rclcpp::Duration> time_offsets;
   for (size_t i = 0; i < num_measurements; i++) {
     // chronoライブラリでLiDAR時刻取得直前の時刻を取得
+    // Get time just before obtaining LiDAR time using chrono library
     rclcpp::Time request_time(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
     // LiDARから時刻を取得
+    // Get time from LiDAR
     double urg_timestamp = urg_time_stamp(&urg_);
     rclcpp::Time lidar_time(1e6 * urg_timestamp);
     // LiDAR時刻取得後の時刻を取得
+    // Get time after obtaining LiDAR time
     rclcpp::Time response_time(std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count());
     // 直前時刻と直後時刻の平均値を取得時刻とみなす
+    // Consider average of before and after time as acquisition time
     rclcpp::Time average_time((response_time.nanoseconds() + request_time.nanoseconds()) / 2.0);
     // chronoライブラリで取得した時刻とLiDAR時刻との差を格納
+    // Store difference between time obtained with chrono library and LiDAR time
     time_offsets.push_back(lidar_time - average_time);
   }
 
@@ -903,6 +999,7 @@ rclcpp::Duration UrgNode2::get_native_clock_offset(size_t num_measurements)
   }
 
   // 格納した差をソートし中央値を返す
+  // Sort stored differences and return median
   std::nth_element(
     time_offsets.begin(),
     time_offsets.begin() + time_offsets.size() / 2, time_offsets.end());
@@ -910,15 +1007,18 @@ rclcpp::Duration UrgNode2::get_native_clock_offset(size_t num_measurements)
 }
 
 // システム時刻とLiDAR時刻の差の計算
+// Calculate difference between system time and LiDAR time
 rclcpp::Duration UrgNode2::get_time_stamp_offset(size_t num_measurements)
 {
   // すでに計測開始されていた場合"0"を返す
+  // Return "0" if measurement has already started
   if (is_measurement_started_) {
-    std::stringstream ss;
-    ss << "Cannot get time stamp offset while started.";
     throw std::runtime_error(ss.str());
   }
 
+  // 計測開始
+  // Start measurement
+  int ret = urg_start_measurement(&urg_, measurement_type_, 0, skip_, 0);
   // 計測開始
   int ret = urg_start_measurement(&urg_, measurement_type_, 0, skip_, 0);
   if (ret < 0) {
@@ -937,6 +1037,7 @@ rclcpp::Duration UrgNode2::get_time_stamp_offset(size_t num_measurements)
     long system_time_stamp = system_clock.now().nanoseconds();
 
     // データ取得時のシステム時刻とLiDAR時刻を取得
+    // Get system time and LiDAR time during data acquisition
     if (measurement_type_ == URG_DISTANCE) {
       ret = urg_get_distance(&urg_, &distance_[0], &time_stamp);
     } else if (measurement_type_ == URG_DISTANCE_INTENSITY) {
@@ -956,21 +1057,24 @@ rclcpp::Duration UrgNode2::get_time_stamp_offset(size_t num_measurements)
     }
 
     rclcpp::Time lidar_timestamp(1e6 * time_stamp);
-    rclcpp::Time system_timestamp(system_time_stamp);
     time_offsets.push_back(lidar_timestamp - system_timestamp);
   }
 
   // 計測停止
+  // Stop measurement
   urg_stop_measurement(&urg_);
   is_measurement_started_ = false;
 
   // 格納した差をソートし中央値を返す
+  // Sort stored differences and return median
   std::nth_element(
     time_offsets.begin(),
-    time_offsets.begin() + time_offsets.size() / 2, time_offsets.end());
-  return time_offsets[time_offsets.size() / 2];
 }
 
+// 指数移動平均による動的補正
+// Dynamic correction using exponential moving average
+rclcpp::Time UrgNode2::get_synchronized_time(long time_stamp, rclcpp::Time system_time_stamp)
+{
 // 指数移動平均による動的補正
 rclcpp::Time UrgNode2::get_synchronized_time(long time_stamp, rclcpp::Time system_time_stamp)
 {
@@ -978,16 +1082,18 @@ rclcpp::Time UrgNode2::get_synchronized_time(long time_stamp, rclcpp::Time syste
 
   const uint32_t t1 = static_cast<uint32_t>(time_stamp);
   const uint32_t t0 = static_cast<uint32_t>(last_hardware_time_stamp_);
-  const uint32_t mask = 0x00ffffff;
-  double delta = static_cast<double>(mask & (t1 - t0)) / 1000.0;
-  hardware_clock_ += delta;
-  double cur_adj = stamp.seconds() - hardware_clock_;
   if (adj_count_ > 0) {
     hardware_clock_adj_ = adj_alpha_ * cur_adj + (1.0 - adj_alpha_) * hardware_clock_adj_;
   } else {
     // 指数移動平均の初期化
+    // Initialize exponential moving average
     hardware_clock_adj_ = cur_adj;
   }
+  adj_count_++;
+  last_hardware_time_stamp_ = time_stamp;
+
+  // ズレのチェック
+  // Check for drift
   adj_count_++;
   last_hardware_time_stamp_ = time_stamp;
 
@@ -995,6 +1101,7 @@ rclcpp::Time UrgNode2::get_synchronized_time(long time_stamp, rclcpp::Time syste
   if (adj_count_ > 100) {
     stamp = rclcpp::Time((hardware_clock_ + hardware_clock_adj_) * 1e9);
     // ズレが大きすぎると指数移動平均の初期化
+    // Initialize exponential moving average if drift is too large
     if (fabs((stamp - system_time_stamp).seconds()) > 0.1) {
       adj_count_ = 0;
       hardware_clock_ = 0.0;
@@ -1007,9 +1114,11 @@ rclcpp::Time UrgNode2::get_synchronized_time(long time_stamp, rclcpp::Time syste
 }
 
 // 開始角度位置移動までのオフセット計算
+// Calculate offset until start angle position movement
 rclcpp::Duration UrgNode2::get_angular_time_offset(void)
 {
   // スキャンデータのタイムスタンプは真後ろのものなので開始角度位置までの時間をオフセットとして加算する必要がある
+  // Since scan data timestamp is from the rear, time to start angle position needs to be added as offset
   double circle_fraction = 0.0;
   if (first_step_ == 0 && last_step_ == 0) {
     int min_step, max_step;
